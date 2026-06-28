@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ESP32 Digital Twin — Industrial Monitor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0a0f1a;
+      --surface:  #111827;
+      --border:   #1e2d45;
+      --green:    #10b981;
+      --yellow:   #f59e0b;
+      --red:      #ef4444;
+      --blue:     #3b82f6;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --font:     'Courier New', monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 16px; letter-spacing: 1px; color: var(--green); }
+    header .subtitle { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    #conn-badge {
+      padding: 4px 12px; border-radius: 4px; font-size: 11px; letter-spacing: 1px;
+      background: #1a2535; color: var(--muted); border: 1px solid var(--border);
+    }
+    #conn-badge.online  { background: #052e16; color: var(--green); border-color: var(--green); }
+    #conn-badge.offline { background: #2d0a0a; color: var(--red);   border-color: var(--red);   }
+
+    main { padding: 20px 24px; display: grid; gap: 16px; }
+
+    .stats-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px 16px;
+    }
+    .stat-card .label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; color: var(--text); }
+    .stat-card .unit  { font-size: 11px; color: var(--muted); margin-left: 3px; }
+    .stat-card.ok       { border-left: 3px solid var(--green); }
+    .stat-card.warning  { border-left: 3px solid var(--yellow); }
+    .stat-card.critical { border-left: 3px solid var(--red);   }
+
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .chart-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px;
+    }
+    .chart-card h3 { font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 12px; }
+    .chart-card canvas { width: 100% !important; height: 160px !important; }
+
+    .bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .health-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+    }
+    .health-card h3 { font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 14px; }
+    .health-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .health-row .metric { color: var(--muted); font-size: 11px; }
+    .health-row .val    { color: var(--text);  font-size: 13px; font-weight: 600; }
+    .bar-wrap { height: 6px; background: var(--border); border-radius: 3px; margin-top: 3px; }
+    .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+
+    .log-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; overflow-y: auto; max-height: 280px;
+    }
+    .log-card h3 { font-size: 11px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+    .log-line { font-size: 11px; color: var(--muted); padding: 3px 0; border-bottom: 1px solid #0d1623; }
+    .log-line.warn { color: var(--yellow); }
+    .log-line.crit { color: var(--red); }
+    .log-line .ts  { color: #2a4060; margin-right: 8px; }
+
+    .machine-select { margin-bottom: 4px; }
+    .machine-select input {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-family: var(--font); font-size: 13px; padding: 8px 12px;
+      width: 260px;
+    }
+    .machine-select button {
+      background: var(--blue); border: none; border-radius: 6px;
+      color: #fff; font-family: var(--font); font-size: 12px;
+      padding: 8px 16px; cursor: pointer; margin-left: 8px;
+    }
+
+    #state-badge {
+      display: inline-block; padding: 3px 10px; border-radius: 4px;
+      font-size: 10px; letter-spacing: 2px; font-weight: 700;
+      background: #1a2535; color: var(--muted); border: 1px solid var(--border);
+    }
+    #state-badge.RUNNING     { background: #052e16; color: var(--green); border-color: var(--green); }
+    #state-badge.WARNING     { background: #2d1a00; color: var(--yellow);border-color: var(--yellow);}
+    #state-badge.CRITICAL    { background: #2d0a0a; color: var(--red);   border-color: var(--red);   }
+    #state-badge.OFFLINE     { background: #1a2535; color: var(--muted); border-color: var(--border);}
+    #state-badge.MAINTENANCE { background: #1a1a2e; color: var(--blue);  border-color: var(--blue);  }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>⚙️ ESP32 DIGITAL TWIN — INDUSTRIAL MONITOR</h1>
+    <div class="subtitle">Project Lab India | Kushagra Bansal | Real-time via WebSocket</div>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <span id="state-badge">INITIALISING</span>
+    <span id="conn-badge">● DISCONNECTED</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Machine selector -->
+  <div class="machine-select">
+    <input id="machine-input" type="text" value="PLI-M001" placeholder="Machine ID (e.g. PLI-M001)"/>
+    <button onclick="connectMachine()">CONNECT</button>
+    <span id="last-update" style="color:var(--muted); margin-left:16px; font-size:11px;"></span>
+  </div>
+
+  <!-- Live stat cards -->
+  <div class="stats-row">
+    <div class="stat-card ok" id="card-temp">
+      <div class="label">Temperature</div>
+      <div class="value"><span id="val-temp">—</span><span class="unit">°C</span></div>
+    </div>
+    <div class="stat-card ok" id="card-hum">
+      <div class="label">Humidity</div>
+      <div class="value"><span id="val-hum">—</span><span class="unit">%</span></div>
+    </div>
+    <div class="stat-card ok" id="card-vib">
+      <div class="label">Vibration RMS</div>
+      <div class="value"><span id="val-vib">—</span><span class="unit">g</span></div>
+    </div>
+    <div class="stat-card ok" id="card-cur">
+      <div class="label">Current Draw</div>
+      <div class="value"><span id="val-cur">—</span><span class="unit">A</span></div>
+    </div>
+    <div class="stat-card ok" id="card-snd">
+      <div class="label">Sound Level</div>
+      <div class="value"><span id="val-snd">—</span><span class="unit">dB</span></div>
+    </div>
+    <div class="stat-card ok" id="card-health">
+      <div class="label">Health Score</div>
+      <div class="value"><span id="val-health">—</span><span class="unit">/100</span></div>
+    </div>
+  </div>
+
+  <!-- Real-time charts -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>🌡 Temperature (°C)</h3>
+      <canvas id="chart-temp"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>📳 Vibration (g RMS)</h3>
+      <canvas id="chart-vib"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>⚡ Current Draw (A)</h3>
+      <canvas id="chart-cur"></canvas>
+    </div>
+  </div>
+
+  <!-- Health + Log -->
+  <div class="bottom-row">
+    <div class="health-card">
+      <h3>🏥 Machine Health</h3>
+
+      <div class="health-row">
+        <div>
+          <div class="metric">Health Score</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-health" style="width:0%;background:var(--green);"></div></div>
+        </div>
+        <div class="val" id="txt-health">—</div>
+      </div>
+
+      <div class="health-row">
+        <div>
+          <div class="metric">Anomaly Probability</div>
+          <div class="bar-wrap"><div class="bar-fill" id="bar-anomaly" style="width:0%;background:var(--red);"></div></div>
+        </div>
+        <div class="val" id="txt-anomaly">—</div>
+      </div>
+
+      <div style="margin-top:14px; display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <div><span style="color:var(--muted);font-size:11px;">State</span><br><strong id="txt-state">—</strong></div>
+        <div><span style="color:var(--muted);font-size:11px;">Packets Received</span><br><strong id="txt-packets">—</strong></div>
+        <div><span style="color:var(--muted);font-size:11px;">Alerts (1h)</span><br><strong id="txt-alerts">—</strong></div>
+        <div><span style="color:var(--muted);font-size:11px;">Est. RUL</span><br><strong id="txt-rul">—</strong></div>
+        <div><span style="color:var(--muted);font-size:11px;">Peak Temp</span><br><strong id="txt-peak-temp">—</strong></div>
+        <div><span style="color:var(--muted);font-size:11px;">Peak Vibration</span><br><strong id="txt-peak-vib">—</strong></div>
+      </div>
+    </div>
+
+    <div class="log-card" id="event-log">
+      <h3>📋 Event Log</h3>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const MAX_POINTS = 60;
+  let ws = null;
+
+  // Chart setup
+  function makeChart(id, label, color) {
+    const ctx = document.getElementById(id).getContext('2d');
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label, data: [], borderColor: color,
+          backgroundColor: color + '20', borderWidth: 1.5,
+          pointRadius: 0, tension: 0.4, fill: true,
+        }]
+      },
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { grid: { color: '#1e2d45' }, ticks: { color: '#64748b', font: { size: 10 } } }
+        }
+      }
+    });
+  }
+
+  const charts = {
+    temp: makeChart('chart-temp', 'Temp °C',    '#ef4444'),
+    vib:  makeChart('chart-vib',  'Vibration g','#f59e0b'),
+    cur:  makeChart('chart-cur',  'Current A',  '#3b82f6'),
+  };
+
+  function pushPoint(chart, label, value) {
+    chart.data.labels.push(label);
+    chart.data.datasets[0].data.push(value);
+    if (chart.data.labels.length > MAX_POINTS) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update('none');
+  }
+
+  function alertClass(level) {
+    return ['ok','warning','critical'][level] || 'ok';
+  }
+
+  function setCard(id, level) {
+    const el = document.getElementById(id);
+    el.className = 'stat-card ' + alertClass(level);
+  }
+
+  function addLog(msg, level) {
+    const log = document.getElementById('event-log');
+    const div = document.createElement('div');
+    div.className = 'log-line' + (level >= 2 ? ' crit' : level === 1 ? ' warn' : '');
+    const ts = new Date().toTimeString().slice(0,8);
+    div.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    // Keep last 100 lines
+    while (log.children.length > 101) log.removeChild(log.children[1]);
+  }
+
+  function updateHealth(health) {
+    const score = health.health_score ?? 0;
+    const anom  = (health.anomaly_probability ?? 0) * 100;
+    document.getElementById('bar-health').style.width   = score + '%';
+    document.getElementById('bar-anomaly').style.width  = anom + '%';
+    document.getElementById('txt-health').textContent   = score.toFixed(1);
+    document.getElementById('txt-anomaly').textContent  = anom.toFixed(1) + '%';
+    document.getElementById('txt-state').textContent    = health.state ?? '—';
+    document.getElementById('txt-packets').textContent  = health.total_packets ?? '—';
+    document.getElementById('txt-alerts').textContent   = health.alerts_last_hour ?? '—';
+    document.getElementById('txt-rul').textContent      = health.estimated_rul_hours
+      ? health.estimated_rul_hours.toFixed(0) + ' h' : '—';
+    document.getElementById('txt-peak-temp').textContent= (health.peak_temperature_c ?? '—') + ' °C';
+    document.getElementById('txt-peak-vib').textContent = (health.peak_vibration_g ?? '—') + ' g';
+    document.getElementById('val-health').textContent   = score.toFixed(0);
+
+    // State badge
+    const badge = document.getElementById('state-badge');
+    badge.className = '';
+    badge.classList.add(health.state ?? 'OFFLINE');
+    badge.textContent = health.state ?? 'OFFLINE';
+  }
+
+  function onTelemetry(data) {
+    const ts = new Date().toTimeString().slice(0,8);
+    document.getElementById('val-temp').textContent  = (data.temperature_c ?? 0).toFixed(1);
+    document.getElementById('val-hum').textContent   = (data.humidity_pct  ?? 0).toFixed(1);
+    document.getElementById('val-vib').textContent   = (data.vibration_g   ?? 0).toFixed(3);
+    document.getElementById('val-cur').textContent   = (data.current_a     ?? 0).toFixed(1);
+    document.getElementById('val-snd').textContent   = (data.sound_db      ?? 0).toFixed(1);
+    document.getElementById('last-update').textContent = 'Last: ' + ts;
+
+    pushPoint(charts.temp, ts, data.temperature_c);
+    pushPoint(charts.vib,  ts, data.vibration_g);
+    pushPoint(charts.cur,  ts, data.current_a);
+
+    const lvl = data.alert_level ?? 0;
+    ['card-temp','card-hum','card-vib','card-cur','card-snd'].forEach(id => setCard(id, lvl));
+
+    if (lvl > 0) {
+      addLog(`ALERT [${data.alert_reason}]`, lvl);
+    }
+  }
+
+  function connectMachine() {
+    const machineId = document.getElementById('machine-input').value.trim();
+    if (!machineId) return;
+    if (ws) { ws.close(); ws = null; }
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url   = `${proto}://${location.host}/ws/${machineId}`;
+
+    addLog(`Connecting to ${url} ...`, 0);
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      document.getElementById('conn-badge').className = 'online';
+      document.getElementById('conn-badge').textContent = '● CONNECTED';
+      addLog(`Connected — machine: ${machineId}`, 0);
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'telemetry')      onTelemetry(msg.data);
+      else if (msg.type === 'connected') { updateHealth(msg.data); addLog('Twin synchronised', 0); }
+      else if (msg.type === 'state_change') {
+        addLog(`STATE: ${msg.data.old_state} → ${msg.data.new_state}`, msg.data.new_state === 'CRITICAL' ? 2 : 0);
+        updateHealth({ state: msg.data.new_state });
+      }
+    };
+
+    ws.onerror = (e) => {
+      document.getElementById('conn-badge').className = 'offline';
+      document.getElementById('conn-badge').textContent = '● ERROR';
+      addLog('WebSocket error — is the backend running?', 2);
+    };
+
+    ws.onclose = () => {
+      document.getElementById('conn-badge').className = 'offline';
+      document.getElementById('conn-badge').textContent = '● DISCONNECTED';
+      addLog('Disconnected', 1);
+    };
+  }
+
+  // Auto-connect on load
+  window.onload = () => {
+    addLog('Dashboard loaded — Project Lab India', 0);
+    addLog('Enter Machine ID and click CONNECT', 0);
+    connectMachine();
+  };
+</script>
+</body>
+</html>
